@@ -81,7 +81,7 @@ if len(uploaded_files) >= 2:
         label_atual = labels.get(atual_col, atual_col)
 
         # Gráfico de Impacto
-        st.plotly_chart(plot_drilldown_chart(df_active, atual_col, ano_at, ano_ant), use_container_width=True)
+        # st.plotly_chart(plot_drilldown_chart(df_active, atual_col, ano_at, ano_ant), use_container_width=True)
         
         # Cabeçalho da Tabela e Botão Voltar
         st.markdown("---")
@@ -109,42 +109,19 @@ if len(uploaded_files) >= 2:
             key=f"tab_drill_{nivel}"
         )
 
-        # --- 7. RELATÓRIO DE AUDITORIA IA ---
         st.markdown("---")
-        st.subheader("🕵️ Auditoria Estratégica IA")
-        
-        if st.button("🚀 Gerar Auditoria Exaustiva", use_container_width=True, key="btn_ia_run"):
-            if not dimensoes_ia:
-                st.warning("⚠️ Selecione as dimensões na barra lateral para análise.")
-            else:
-                with st.status("IA analisando desvios e causas raízes...", expanded=True):
-                    # Agrupamento dinâmico conforme sidebar
-                    df_sum_ia = df_filtrado.groupby(dimensoes_ia + ['Ano'])['Valor'].sum().unstack(level='Ano').fillna(0)
-                    
-                    # Verificação de colunas de ano
-                    for a in [ano_at, ano_ant]:
-                        if a not in df_sum_ia.columns: df_sum_ia[a] = 0
-                    
-                    df_sum_ia['Variacao'] = df_sum_ia[ano_at] - df_sum_ia[ano_ant]
-                    
-                    # Filtro de foco (Savings vs Desvios)
-                    if "Savings" in foco_res:
-                        df_sum_ia = df_sum_ia[df_sum_ia['Variacao'] < 0]
-                    elif "Desvios" in foco_res:
-                        df_sum_ia = df_sum_ia[df_sum_ia['Variacao'] > 0]
-                    
-                    # Envio exaustivo (sem .head())
-                    resumo_ia = df_sum_ia.sort_values(by='Variacao').to_string()
-                    contexto = f"Hierarquia: {dimensoes_ia} | Localização: {path_txt} | Foco: {foco_res}"
-                    
-                    relatorio = get_ai_insights(resumo_ia, contexto, api_key)
-                    st.markdown(relatorio)
+        st.subheader("📑 Auditoria Hierárquica de Variações")
 
-        # Captura de clique na tabela para descer de nível
-        if event.selection.rows:
-            selecao = df_pivot.index[event.selection.rows[0]]
-            st.session_state.drill_path.append((atual_col, selecao))
-            st.rerun()
+        if not dimensoes_ia:
+            st.warning("Selecione as dimensões na barra lateral.")
+        else:
+            from logic import render_report_ui, prepare_report_data            
+            # 1. Pré-calculamos tudo (Rápido, fora da recursão)
+            with st.spinner("Processando indicadores..."):
+                df_master = prepare_report_data(df_filtrado, dimensoes_ia, ano_at, ano_ant)
+            
+            # 2. Renderizamos a UI (Instantâneo, apenas consulta a df_master)
+            render_report_ui(df_master, dimensoes_ia, foco_res)
 
     else:
         # Nível Final (Material)

@@ -1,103 +1,82 @@
 import plotly.express as px
 import pandas as pd
-import streamlit as st
 
-def plot_yoy_chart(df_comp):
+def plot_drilldown_chart(df, level_col, ano_at, ano_ant):
     """
-    Gera um gráfico de barras comparativo mensal simples para o custo total.
-    Ideal para uma visão macro de sazonalidade entre os anos.
+    Gera um gráfico de barras horizontal mostrando a variação absoluta (R$) 
+    entre o ano atual e o anterior para o nível hierárquico selecionado.
     """
-    resumo = df_comp.groupby(['Ano', 'Mes'])['Valor'].sum().reset_index()
-    
-    fig = px.bar(
-        resumo, 
-        x='Mes', 
-        y='Valor', 
-        color='Ano', 
-        barmode='group',
-        title="📊 Comparativo de Custos Totais Mensais (Período Equivalente)",
-        labels={'Valor': 'Custo Total (R$)', 'Mes': 'Mês', 'Ano': 'Ano'}
-    )
-    
-    # Configuração de eixos e formato de moeda (BR)
-    fig.update_layout(
-        xaxis_type='category', 
-        separators=',.', 
-        yaxis=dict(tickformat=',.2f')
-    )
-    return fig
-
-def plot_drilldown_chart(df, level_col, ano_atual, ano_anterior):
-    """
-    Gráfico de impacto financeiro (Variação Absoluta).
-    Utiliza escala divergente com o zero como ponto central (Midpoint).
-    """
-    # Consolidação dos anos para cálculo da diferença
+    # 1. Agrupamento por Ano e pela Coluna de Nível (ex: Desc_Conta, Localidade)
     pivot = df.groupby(['Ano', level_col])['Valor'].sum().unstack(level=0).fillna(0)
     
-    # Garantia de que as colunas existem para evitar KeyError
-    for ano in [ano_atual, ano_anterior]:
+    # Garantir que ambos os anos existem no DataFrame para evitar erros de cálculo
+    for ano in [ano_at, ano_ant]:
         if ano not in pivot.columns:
             pivot[ano] = 0
             
-    # Cálculo da Variação (Saving se negativo, Gasto se positivo)
-    pivot['Variacao'] = pivot[ano_atual] - pivot[ano_anterior]
-    pivot = pivot.sort_values(by='Variacao').reset_index()
+    # 2. Cálculo da Variação (Saving vs Desvio)
+    pivot['Variacao'] = pivot[ano_at] - pivot[ano_ant]
     
-    # Construção do gráfico
+    # Ordenar para mostrar os maiores ganhos (savings) no topo ou base
+    pivot = pivot.sort_values(by='Variacao', ascending=True).reset_index()
+
+    # 3. Criação do Gráfico
+    # Usamos a escala RdYlGn_r (Red-Yellow-Green Reverse)
+    # Valores negativos (Savings) ficam VERDES | Valores positivos (Gastos) ficam VERMELHOS
     fig = px.bar(
-        pivot, 
-        x=level_col, 
-        y='Variacao',
-        title=f"📉 Impacto Financeiro YoY por {level_col}",
-        labels={'Variacao': 'Diferença YoY (R$)', level_col: level_col},
+        pivot,
+        x='Variacao',
+        y=level_col,
+        orientation='h',
         color='Variacao',
-        # RdYlGn_r: Red (Gasto) -> Yellow (Neutro) -> Green (Saving)
-        color_continuous_scale='RdYlGn_r', 
-        color_continuous_midpoint=0,  # CRÍTICO: Fixa o zero como cor neutra
-        text_auto='.2s'
+        color_continuous_scale='RdYlGn_r',
+        color_continuous_midpoint=0,
+        labels={'Variacao': 'Diferença YoY (R$)', level_col: ''},
+        title=f"Impacto Financeiro por {level_col} (Diferença {ano_ant} vs {ano_at})"
+    )
+
+    # Ajustes estéticos
+    fig.update_layout(
+        showlegend=False,
+        height=400 + (len(pivot) * 20), # Altura dinâmica baseada no número de itens
+        margin=dict(l=20, r=20, t=50, b=20),
+        yaxis={'categoryorder': 'total descending'}
     )
     
-    # Formatação visual
-    fig.update_layout(
-        separators=',.', 
-        yaxis=dict(tickformat=',.2f'),
-        coloraxis_showscale=True
-    )
     return fig
 
-def render_dynamic_table(df, level_col, ano_atual, ano_anterior):
+def render_dynamic_table(df, level_col, ano_at, ano_ant):
     """
-    Gera a matriz (pivot) de variação mensal para a tabela dinâmica.
-    Calcula (Ano Atual - Ano Anterior) para cada célula da matriz.
+    Cria a matriz de variação mensal. 
+    Cada célula representa (Valor Mês Ano Atual - Valor Mês Ano Anterior).
     """
-    # 1. Pivotar Ano Atual
-    p_atual = df[df['Ano'] == ano_atual].pivot_table(
+    # 1. Pivotar dados por ano
+    # Mês nas colunas, Nível nas linhas
+    p_at = df[df['Ano'] == ano_at].pivot_table(
         index=level_col, columns='Mes', values='Valor', aggfunc='sum'
     ).fillna(0)
     
-    # 2. Pivotar Ano Anterior
-    p_ant = df[df['Ano'] == ano_anterior].pivot_table(
+    p_ant = df[df['Ano'] == ano_ant].pivot_table(
         index=level_col, columns='Mes', values='Valor', aggfunc='sum'
     ).fillna(0)
     
-    # 3. Sincronizar eixos para garantir que a subtração ocorra em meses equivalentes
-    todos_meses = sorted(list(set(p_atual.columns) | set(p_ant.columns)))
-    p_atual = p_atual.reindex(columns=todos_meses, fill_value=0)
+    # 2. Harmonizar colunas (garantir que ambos tenham os mesmos meses)
+    todos_meses = sorted(list(set(p_at.columns) | set(p_ant.columns)))
+    p_at = p_at.reindex(columns=todos_meses, fill_value=0)
     p_ant = p_ant.reindex(columns=todos_meses, fill_value=0)
     
-    # 4. Cálculo da Diferença (Deltas Mensais)
-    df_yoy = p_atual - p_ant
+    # 3. Calcular a Variação Mensal (Delta)
+    df_delta = p_at - p_ant
     
-    # 5. Adição de métrica acumulada no final
-    df_yoy['Total Geral'] = df_yoy.sum(axis=1)
+    # 4. Adicionar Coluna de Total e Ordenar
+    df_delta['Total Geral'] = df_delta.sum(axis=1)
     
-    # 6. Mapeamento de meses para formato legível (BR)
+    # Mapear números dos meses para nomes abreviados
     meses_br = {
         1:'Jan', 2:'Fev', 3:'Mar', 4:'Abr', 5:'Mai', 6:'Jun',
         7:'Jul', 8:'Ago', 9:'Set', 10:'Out', 11:'Nov', 12:'Dez'
     }
-    df_yoy.columns = [meses_br.get(c, c) for c in df_yoy.columns]
+    df_delta.rename(columns=meses_br, inplace=True)
     
-    # Retorna ordenado pelo maior "ofensor" (maior custo incremental)
-    return df_yoy.sort_values(by='Total Geral', ascending=False)
+    # Ordenamos pelos maiores savings (mais negativos) primeiro
+    return df_delta.sort_values(by='Total Geral')

@@ -1,102 +1,100 @@
 import pandas as pd
 import streamlit as st
 
-@st.cache_data(show_spinner=False)
 def clean_data(df):
     """
-    Limpeza ultra-robusta com Cache. 
-    Identifica 'Cl.custo' e garante que a hierarquia seja processada sem duplicidade.
+    Realiza a limpeza, padronização de colunas e criação da 
+    coluna concatenada oficial (Desc_Conta).
     """
-    # 1. Limpeza de nomes de colunas
-    df.columns = [c.strip() for c in df.columns]
+    # 1. Limpeza preventiva: remove espaços em branco invisíveis nos nomes das colunas
+    df.columns = df.columns.str.strip()
+
+    # --- MAPEAMENTO DE COLUNAS ---
+    # AJUSTE A ESQUERDA conforme os nomes exatos no seu arquivo CSV
+    mapeamento = {
+        'Dt.lçto.': 'Data_Lancamento', 
+        'LINHA P&L': 'P_L',
+        'VP': 'VP',
+        'LOCALIDADE': 'Localidade',
+        'Centro cst': 'Centro_Custo',
+        'DenClsCst': 'DenClsCst',        
+        'Cl.custo': 'Classe_Custo', 
+        'Texto breve material': 'Desc_Material',
+        'Valor/moeda objeto': 'Valor',
+        'DIRETORIA': 'Diretoria'
+    }
     
-    # 2. Mapeamento inteligente (Keywords)
-    mapeado = {k: False for k in ['Classe_Custo', 'Centro_Custo', 'Localidade', 'Diretoria', 'VP', 'Texto_Material', 
-                                  'Valor_Original', 'Data_Lancamento']}
-    
-    new_cols = {}
-    for col in df.columns:
-        c_upper = col.upper()
-        
-        # Prioridade de mapeamento
-        if 'LOCAL' in c_upper and not mapeado['Localidade']: 
-            new_cols[col] = 'Localidade'; mapeado['Localidade'] = True
-        elif 'DIRET' in c_upper and not mapeado['Diretoria']: 
-            new_cols[col] = 'Diretoria'; mapeado['Diretoria'] = True
-        elif 'VP' in c_upper and not mapeado['VP']: 
-            new_cols[col] = 'VP'; mapeado['VP'] = True
-        elif 'TEXTO' in c_upper and 'MAT' in c_upper and not mapeado['Texto_Material']: 
-            new_cols[col] = 'Texto_Material'; mapeado['Texto_Material'] = True
-        elif 'VALOR' in c_upper and not mapeado['Valor_Original']: 
-            new_cols[col] = 'Valor_Original'; mapeado['Valor_Original'] = True
-        elif 'DT' in c_upper and 'TO' in c_upper and not mapeado['Data_Lancamento']: 
-            new_cols[col] = 'Data_Lancamento'; mapeado['Data_Lancamento'] = True
-        
-        # Identificação específica para Classe de Custo (Cl.custo)
-        elif ('CL.' in c_upper or 'CLASSE' in c_upper or 'CONTA' in c_upper) and not mapeado['Classe_Custo']: 
-            new_cols[col] = 'Classe_Custo'; mapeado['Classe_Custo'] = True
-            
-        elif 'CENTRO' in c_upper and 'CST' in c_upper and not mapeado['Centro_Custo']: 
-            new_cols[col] = 'Centro_Custo'; mapeado['Centro_Custo'] = True
-            
-    df = df.rename(columns=new_cols).copy()
+    # Renomeia as colunas baseadas no dicionário acima
+    df = df.rename(columns=mapeamento)
 
-    # 3. Blindagem contra colunas duplicadas
-    df = df.loc[:, ~df.columns.duplicated()]
+    # --- DIAGNÓSTICO DE ERRO ---
+    # Se o erro 'Data_Lancamento' persistir, este bloco mostrará o culpado
+    if 'Data_Lancamento' not in df.columns:
+        st.error("🚨 Erro de Mapeamento: Coluna de Data não encontrada!")
+        st.write("O Python detetou estas colunas no seu arquivo:", df.columns.tolist())
+        st.info("DICA: Verifique se o nome no CSV é exatamente igual ao que está no dicionário 'mapeamento' acima.")
+        st.stop()
 
-    # 4. Filtro VP = 0
-    if 'VP' in df.columns:
-        df = df[df['VP'].astype(str).str.strip() != '0']
-
-    # 5. Padronização de Strings (Evita erros no sorted e selectbox)
-    cols_to_fix = ['Localidade', 'Diretoria', 'VP', 'Texto_Material', 'Classe_Custo', 'Centro_Custo']
-    for col in cols_to_fix:
-        if col in df.columns:
-            df[col] = df[col].astype(str).replace('nan', 'Não Informado').str.strip()
-
-    # 6. Conversão de Valor (Suporta ponto como milhar e vírgula como decimal)
-    if 'Valor_Original' in df.columns:
-        v_col = df['Valor_Original']
-        if v_col.dtype == object:
-            df['Valor'] = (v_col.str.replace('.', '', regex=False)
-                           .str.replace(',', '.', regex=False)
-                           .astype(float))
-        else:
-            df['Valor'] = v_col
-    
-    # 7. Parsing de Datas e Atributos Temporais
+    # --- 2. TRATAMENTO DE DATAS ---
     df['Data_Lancamento'] = pd.to_datetime(df['Data_Lancamento'], dayfirst=True, errors='coerce')
+    # Remove linhas onde a data não pôde ser convertida
     df = df.dropna(subset=['Data_Lancamento'])
     
-    df['Dia'] = df['Data_Lancamento'].dt.day
-    df['Mes'] = df['Data_Lancamento'].dt.month
+    # Criação de colunas auxiliares para agrupamento
     df['Ano'] = df['Data_Lancamento'].dt.year
+    df['Mes'] = df['Data_Lancamento'].dt.month
+    
+    # --- 3. TRATAMENTO DE VALORES NUMÉRICOS ---
+    # Converte '1.234,56' (String) para 1234.56 (Float)
+    if df['Valor'].dtype == object:
+        df['Valor'] = (
+            df['Valor']
+            .astype(str)
+            .str.replace('.', '', regex=False)
+            .str.replace(',', '.', regex=False)
+        )
+    df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0)
+    
+    # --- 4. TAXONOMIA OFICIAL (Concatenação) ---
+    # Regra: "Descrição da Conta - Código"
+    df['DenClsCst'] = df['DenClsCst'].fillna('Sem Descrição')
+    df['Classe_Custo'] = df['Classe_Custo'].fillna('000000')
+    
+    df['Desc_Conta'] = df['DenClsCst'].astype(str) + " - " + df['Classe_Custo'].astype(str)
     
     return df
 
-@st.cache_data(show_spinner=False)
-def get_yoy_data(full_df, apenas_completos=False):
+def get_yoy_data(df, apenas_completos=True):
     """
-    Filtra períodos equivalentes para comparação justa (YoY).
-    Cacheado para evitar reprocessamento em cada clique de navegação.
+    Filtra a base para permitir uma comparação Year-over-Year (YoY) justa.
     """
-    if full_df.empty:
-        return full_df, None, None
+    if df.empty:
+        return pd.DataFrame(), 0, 0
         
-    ano_atual = full_df['Ano'].max()
-    ano_anterior = full_df['Ano'].min()
+    # Identifica os dois anos mais recentes
+    anos = sorted(df['Ano'].unique(), reverse=True)
+    if len(anos) < 2:
+        return pd.DataFrame(), 0, 0
+        
+    ano_at, ano_ant = anos[0], anos[1]
     
-    # Busca a última data do ano atual para servir de régua para o ano anterior
-    ultima_data = full_df[full_df['Ano'] == ano_atual]['Data_Lancamento'].max()
-    
+    # Lógica de meses equivalentes
     if apenas_completos:
-        # Filtra apenas meses que já terminaram no ano atual
-        df_comp = full_df[full_df['Mes'] < ultima_data.month]
-    else:
-        # Filtra até o dia/mês exato da última atualização
-        df_comp = full_df[
-            (full_df['Mes'] < ultima_data.month) | 
-            ((full_df['Mes'] == ultima_data.month) & (full_df['Dia'] <= ultima_data.day))
-        ]
+        # Pega o último mês com dados no ano atual e subtrai 1 (mês fechado)
+        mes_max_atual = df[df['Ano'] == ano_at]['Mes'].max()
+        mes_limite = mes_max_atual - 1
         
-    return df_comp, ano_atual, ano_anterior
+        # Garante que o limite seja pelo menos Janeiro
+        if mes_limite <= 0:
+            mes_limite = 1
+    else:
+        # Considera todos os meses disponíveis, incluindo o atual incompleto
+        mes_limite = df[df['Ano'] == ano_at]['Mes'].max()
+        
+    # Filtra para que ambos os anos tenham o mesmo range de meses (comparação maçã com maçã)
+    df_filtered = df[df['Mes'] <= mes_limite]
+    
+    # Retorna apenas os dados dos dois anos de interesse
+    df_final = df_filtered[df_filtered['Ano'].isin([ano_at, ano_ant])]
+    
+    return df_final, ano_at, ano_ant

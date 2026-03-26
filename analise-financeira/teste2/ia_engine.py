@@ -4,74 +4,62 @@ from groq import Groq
 @st.cache_data(show_spinner=False)
 def get_ai_insights(data_summary, context_text, api_key):
     """
-    Motor de Auditoria Estratégica Multi-nível.
-    Realiza uma análise exaustiva de variação (Variance Analysis) baseada 
-    nos filtros customizados aplicados pelo utilizador.
+    Motor de Auditoria Exaustiva.
+    Analisa os dados de variação (YoY) buscando eficiência, 
+    ofensores e padrões de produtividade.
     """
-    
     if not api_key:
-        return "⚠️ Erro: Chave de API da Groq não configurada. Verifique o secrets.toml."
+        return "⚠️ Erro: 'GROQ_API_KEY' não configurada nos Secrets do Streamlit."
 
     try:
-        # 1. Inicialização do Cliente
+        # 1. Inicialização do Cliente Groq
         client = Groq(api_key=api_key)
 
-        # 2. Definição da Persona: Auditor Sênior de Controladoria e Engenharia
-        # Foco em Causa Raiz, Sustentabilidade Financeira e Eficiência Operacional.
+        # 2. Definição da Persona e Instruções de Auditoria
         system_instruction = (
-            "Você é um Auditor Sênior de Controladoria e Engenheiro de Dados de Facilities. "
-            "Sua especialidade é Auditoria de Desvios (Variance Audit). "
-            "Sua análise deve ser técnica, profunda e executiva. "
-            "Terminologia: 'Classe de Custo' refere-se às Contas Contábeis; 'Saving' é redução de custo."
+            "Você é um Auditor Sênior de Controladoria e Engenheiro de Facilities. "
+            "Sua especialidade é análise de variação de custo (Variance Analysis). "
+            "Você deve realizar uma leitura técnica profunda, sem generalismos, focando em "
+            "eficiência operacional, gestão de contratos e otimização de recursos. "
+            "Terminologia técnica: 'Classe de Custo' refere-se às Contas contábeis."
         )
 
-        # 3. Engenharia de Prompt para Auditoria Sem Limites
+        # 3. Engenharia de Prompt (Foco em Auditoria Completa)
         user_prompt = f"""
-        REALIZE UMA AUDITORIA EXAUSTIVA DE DESEMPENHO FINANCEIRO YOY. 
-        Não limite sua análise; aborde todos os detalhes relevantes contidos na base fornecida.
+        REALIZE UMA AUDITORIA EXAUSTIVA DE DESEMPENHO FINANCEIRO YOY baseada nos dados fornecidos.
+        Analise todas as linhas, cruzando as dimensões para encontrar a causa raiz dos resultados.
 
-        ### ESCOPO DA AUDITORIA (FILTROS E CONTEXTO):
+        ### CONTEXTO DA AUDITORIA:
         {context_text}
 
-        ### BASE DE DADOS COMPLETA (VARIAÇÃO POR DIMENSÃO):
+        ### BASE DE DADOS (VARIAÇÕES POR DIMENSÃO):
         {data_summary}
 
         ---
-        ### REQUISITOS DO RELATÓRIO (ESTRUTURA EM MARKDOWN):
+        ### REQUISITOS DO RELATÓRIO TÉCNICO:
+        1. **Detalhamento de Impactos Financeiros (Tabela):** Apresente uma tabela Markdown contendo TODOS os itens encontrados com variação de R$ 1.000,00 ou mais na base de dados fornecida. A tabela deve conter exatamente estas colunas: **Desc_Conta**, **Localidade**, **Centro_Custo** e **Variação**.
+           - Logo após a tabela, forneça um resumo detalhado sobre as variações encontradas, detalhando onde houve os impactos e as maiores reduções de custo. 
+           - Nota: Neste item, foque no detalhamento dos fatos e locais; não há necessidade de identificar causas raízes técnicas (como eficiência ou gestão contratual).
 
-        1. **DIAGNÓSTICO POR CATEGORIA:** Analise as variações cruzando as dimensões selecionadas (Localidade vs Centro de Custo vs Classe de Custo). 
-           Identifique onde está a maior concentração de economia ou desvio.
-
-        2. **ANÁLISE DE CAUSA RAIZ E EFICIÊNCIA:**
-           Para os resultados de Savings (Redução), determine o padrão:
-           - **Eficiência Estrutural:** Mudança em contratos ou processos.
-           - **Otimização de Demanda:** Redução real de consumo/uso.
-           - **Variação de Escala:** Ganhos por volume ou centralização.
-
-        3. **MATRIZ DE RISCO E SUSTENTABILIDADE:**
-           Diferencie o que é um ganho sustentável (que se manterá no próximo ano) do que é uma oscilação pontual (ex: atraso de pagamento, sazonalidade extrema).
-
-        4. **PLANO DE REPLICABILIDADE TÉCNICA:**
-           Crie um checklist de ações de Engenharia de Facilities e Gestão de Contratos para replicar os bons resultados em áreas críticas.
-
-        5. **CONCLUSÃO EXECUTIVA:**
-           Dê um veredito sobre a saúde financeira do escopo analisado.
+        2. **Identificação de Padrões Transversais:** Analise se existe um comportamento comum entre as localidades ou centros de custo para uma mesma conta ou grupo de despesas.
 
         ---
-        **Instruções de Estilo:** Use tabelas Markdown para comparar ofensores vs cases de sucesso. Use **negrito** para destacar valores monetários e KPIs.
+        ### REGRAS CRÍTICAS DE FORMATAÇÃO:
+        - **Valores Monetários:** Utilize o padrão brasileiro (ex: **R$ 1.234.567,89**).
+        - **Valores Negativos:** Devem ser apresentados obrigatoriamente seguindo este modelo: **R$ -1.000,00**.
+        - Use Markdown e negrito para destacar KPIs e valores importantes.
         """
 
-        # 4. Chamada ao Modelo (Llama 3.3 70b)
-        # Temperatura 0.1: Rigor matemático e técnico.
-        # Max_tokens 4000: Permite uma análise exaustiva sem cortes no texto.
+        # 4. Chamada ao Modelo Llama 3.3-70b
+        # Temperature 0.1 para garantir máximo rigor técnico e evitar alucinações.
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.1,
-            max_tokens=4000,
+            max_tokens=4000, # Espaço amplo para análises detalhadas e longas
             top_p=1,
             stream=False,
         )
@@ -79,4 +67,4 @@ def get_ai_insights(data_summary, context_text, api_key):
         return completion.choices[0].message.content
 
     except Exception as e:
-        return f"❌ Erro crítico na geração da auditoria: {str(e)}"
+        return f"❌ Erro na Auditoria IA: {str(e)}"

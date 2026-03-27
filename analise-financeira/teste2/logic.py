@@ -80,68 +80,99 @@ def get_trend_text(df_item):
     return " 📈 Tendência: Elevação ou Estabilidade."
 
 def prepare_report_data(df, dims, ano_at, ano_ant):
-    """Pré-calcula todas as variações para evitar GroupBy dentro da recursão."""
-    # Agrupamento global por todas as dimensões + Mes + Ano
-    agrupado = df.groupby(dims + ['Mes', 'Ano'])['Valor'].sum().unstack(level='Ano').fillna(0)
+    """Pre-calcula os dados garantindo que nenhum valor seja descartado (Lossless)."""
+    # Lista de todas as colunas possíveis da hierarquia
+    todas_cols = ['Desc_Conta', 'P_L', 'VP', 'Localidade', 'Centro_Custo', 'Desc_Material']
     
-    # Garante que os anos existem
+    # Criamos uma cópia para não afetar o DataFrame original do main
+    df_clean = df.copy()
+    
+    # CRÍTICO: Preenchemos valores nulos com uma string para o groupby não descartar linhas
+    for c in todas_cols:
+        if c in df_clean.columns:
+            df_clean[c] = df_clean[c].fillna("Não Informado").astype(str)
+    
+    # Agrupamento global usando dropna=False por segurança extra
+    agrupado = df_clean.groupby(dims + ['Mes', 'Ano'], dropna=False)['Valor'].sum().unstack(level='Ano').fillna(0)
+    
     for a in [ano_at, ano_ant]:
         if a not in agrupado.columns: agrupado[a] = 0
     
     agrupado['Delta'] = agrupado[ano_at] - agrupado[ano_ant]
     return agrupado
 
-def render_report_ui(df_master, dims, foco_res, profundidade=0, filtro_contexto=None):
-    """Versão otimizada: consome a df_master pré-calculada."""
+def render_report_ui(df_master, dims, ano_at, ano_ant, foco_res, profundidade=0, filtro_contexto=None):
+    """Relatório onde o Material é puramente informativo e os totais são preservados."""
     if profundidade >= len(dims):
         return
 
+    meses_nomes = {1:'Jan', 2:'Fev', 3:'Mar', 4:'Abr', 5:'Mai', 6:'Jun',
+                   7:'Jul', 8:'Ago', 9:'Set', 10:'Out', 11:'Nov', 12:'Dez'}
+
     col = dims[profundidade]
     
-    # Filtra a base mestra com base no que foi selecionado nos níveis acima
+    # Filtra a base master conforme o nível atual
     df_nivel = df_master.copy()
     if filtro_contexto:
         for c, v in filtro_contexto.items():
             df_nivel = df_nivel.xs(v, level=c, drop_level=False)
 
-    # Pega os itens únicos deste nível
+    # --- 🟢 NÍVEL FINAL: MATERIAIS (APENAS OBSERVAÇÃO) ---
+    if col == 'Desc_Material':
+        st.markdown(f"#### 📦 Balanço Detalhado de Objetos")
+        
+        # Agrupamos por Mês e Material pegando TUDO do contexto atual
+        df_mat_mes = df_nivel.groupby(['Mes', 'Desc_Material'])[[ano_ant, ano_at]].sum()
+        
+        for m_num in sorted(df_mat_mes.index.get_level_values('Mes').unique()):
+            st.write(f"📅 **Referência: {meses_nomes.get(m_num)}**")
+            
+            df_exibir = df_mat_mes.xs(m_num, level='Mes').copy()
+            df_exibir.index.name = "Objeto"
+            df_exibir.columns = pd.MultiIndex.from_tuples([(str(ano_ant), "Valor"), (str(ano_at), "Valor")])
+            
+            # Totais do mês vindos do contexto pai (para garantir fidelidade)
+            t_ant = df_exibir[(str(ano_ant), "Valor")].replace(r'[R$\s.]', '', regex=True).replace(',', '.', regex=True).astype(float).sum() if df_exibir.empty else df_mat_mes.xs(m_num, level='Mes')[ano_ant].sum()
+            t_at = df_mat_mes.xs(m_num, level='Mes')[ano_at].sum()
+            t_ant = df_mat_mes.xs(m_num, level='Mes')[ano_ant].sum()
+
+            df_total = pd.DataFrame([[format_brl(t_ant), format_brl(t_at)]], 
+                                    columns=df_exibir.columns, index=["Total Contexto"])
+            
+            st.table(pd.concat([df_exibir.map(format_brl), df_total]))
+        return 
+
+    # --- 🔵 NÍVEIS DE GESTÃO (CONTA, LOCALIDADE, CC, ETC) ---
     itens = sorted(df_nivel.index.get_level_values(col).unique().astype(str).tolist())
 
-    # Dicionário de meses (estático para performance)
-    meses_nomes = {1:'Jan', 2:'Fev', 3:'Mar', 4:'Abr', 5:'Mai', 6:'Jun',
-                   7:'Jul', 8:'Ago', 9:'Set', 10:'Out', 11:'Nov', 12:'Dez'}
-
     for item in itens:
-        # Dados do item atual
         df_item = df_nivel.xs(item, level=col, drop_level=False)
         var_total = df_item['Delta'].sum()
         
-        # Lógica de Materialidade (R$ 1.000,00)
         def meets_foco(val):
             if abs(val) < 1000: return False
-            return val < 0 if "Savings" in foco_res else (val > 0 if "Desvios" in foco_res else True)
+            if "Savings" in foco_res: return val < 0
+            if "Desvios" in foco_res: return val > 0
+            return True
 
-        # Checagem rápida de subclasses (sem novo groupby)
+        # Verifica se há economia real nas subclasses (excluindo material da decisão de abrir expander)
         sub_impacto = False
-        if profundidade < len(dims) - 1:
-            sub_impacto = df_item['Delta'].groupby(level=dims[-1]).sum().apply(meets_foco).any()
+        if profundidade < len(dims) - 1 and dims[profundidade+1] != 'Desc_Material':
+            sub_impacto = df_item['Delta'].groupby(level=dims[profundidade+1]).sum().apply(meets_foco).any()
 
         if meets_foco(var_total) or sub_impacto:
-            tipo = "💰 SAVING" if var_total < 0 else "⚠️ DESVIO"
-            label = f"{'📌' if profundidade == 0 else '➥'} {item} | Total: {format_brl(var_total)}"
+            label = f"{'📌' if profundidade == 0 else '➥'} {item} | Total Período: {format_brl(var_total)}"
             
             with st.expander(label):
-                # Detalhamento mensal usando a df_item já filtrada
+                st.write("**Variação Mensal YoY (Impacto no Resultado):**")
                 delta_mensal = df_item.groupby(level='Mes')['Delta'].sum()
-                meses_atuais = delta_mensal.index.tolist()
-                cols = st.columns(len(meses_atuais))
-                
-                for idx, m_num in enumerate(meses_atuais):
+                cols = st.columns(len(delta_mensal))
+                for idx, m_num in enumerate(delta_mensal.index):
                     with cols[idx]:
                         st.caption(meses_nomes.get(m_num))
                         st.write(format_brl(delta_mensal[m_num]))
 
-                # Recursão passando o novo contexto de filtro
+                st.divider()
                 novo_contexto = (filtro_contexto or {}).copy()
                 novo_contexto[col] = item
-                render_report_ui(df_master, dims, foco_res, profundidade + 1, novo_contexto)
+                render_report_ui(df_master, dims, ano_at, ano_ant, foco_res, profundidade + 1, novo_contexto)

@@ -121,7 +121,7 @@ if len(uploaded_files) >= 2:
                 df_master = prepare_report_data(df_filtrado, dimensoes_ia, ano_at, ano_ant)
             
             # 2. Renderizamos a UI (Instantâneo, apenas consulta a df_master)
-            render_report_ui(df_master, dimensoes_ia, foco_res)
+            render_report_ui(df_master, dimensoes_ia,ano_at, ano_ant, foco_res)
 
     else:
         # Nível Final (Material)
